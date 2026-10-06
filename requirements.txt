@@ -1,6 +1,15 @@
+<<<<<<< HEAD
 beautifulsoup4
 joblib
 numpy
 pandas
 requests
 scikit-learn
+=======
+# Install with: pip install -r requirements.txt
+pandas==3.0.6
+scikit-learn==1.9.1
+numpy==2.5.3
+matplotlib==3.11.2
+joblib==1.6.0
+>>>>>>> 929c0b34c955612cc4595f8cca8864f1b79c920e
