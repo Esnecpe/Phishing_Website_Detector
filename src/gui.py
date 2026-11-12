@@ -1,3 +1,19 @@
+"""
+Phishing Website Detector - GUI
+
+Tkinter front end for the URL-only Random Forest model.
+
+Flow when the user clicks "Analyze":
+    URL entered
+        -> PhishingPredictor.predict(url)       (phishing_predictor.py)
+        -> 15 URL features -> url_random_forest.pkl
+        -> PHISHING / LEGITIMATE + risk score + confidence
+        -> results shown in this window
+
+Run from the project root:
+    python src/gui.py
+"""
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 from urllib.parse import urlparse
@@ -8,6 +24,8 @@ from phishing_predictor import PhishingPredictor
 # ============================================================
 # DISPLAY-ONLY URL CHECKS
 # ============================================================
+# These lists are used only to describe the URL to the user in the
+# "URL Information" and "Observations" panels. They are NOT model
 # inputs. The prediction comes only from the 15-feature Random Forest.
 
 SUSPICIOUS_KEYWORDS = [
@@ -284,6 +302,13 @@ class PhishingDetectorGUI(tk.Tk):
             self.info_value_labels[label].config(text=value)
 
     def _build_observations(self, result, parsed):
+        """
+        Human-readable notes about the URL.
+
+        These describe common phishing warning signs found in the URL.
+        They help the user understand the URL, but they are not the
+        model's internal reasoning.
+        """
         features = result["features"]
         domain = parsed.hostname or ""
         notes = []
@@ -349,6 +374,11 @@ class PhishingDetectorGUI(tk.Tk):
 
     @staticmethod
     def _count_path_specials(parsed):
+        """
+        Count special characters after the domain (path + query),
+        ignoring "/" separators. The "https://" and the dots in the
+        domain are not counted, since every URL has them.
+        """
         text = parsed.path + parsed.query
         return sum(1 for ch in text if not ch.isalnum() and ch != "/")
 
