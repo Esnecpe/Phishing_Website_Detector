@@ -1,18 +1,9 @@
-"""
-Phishing Website Detector - GUI
-
-Tkinter front end for the URL-only Random Forest model.
-
-Flow when the user clicks "Analyze":
-    URL entered
-        -> PhishingPredictor.predict(url)       (phishing_predictor.py)
-        -> 15 URL features -> url_random_forest.pkl
-        -> PHISHING / LEGITIMATE + risk score + confidence
-        -> results shown in this window
-
-Run from the project root:
-    python src/gui.py
-"""
+# gui.py
+# Tkinter GUI for the phishing detector.
+# Uses the URL-only Random Forest model through phishing_predictor.py
+#
+# Run from the project folder:
+#   python src/gui.py
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -21,375 +12,182 @@ from urllib.parse import urlparse
 from phishing_predictor import PhishingPredictor
 
 
-# ============================================================
-# DISPLAY-ONLY URL CHECKS
-# ============================================================
-# These lists are used only to describe the URL to the user in the
-# "URL Information" and "Observations" panels. They are NOT model
-# inputs. The prediction comes only from the 15-feature Random Forest.
-
-SUSPICIOUS_KEYWORDS = [
-    "login", "signin", "sign-in", "verify", "verification", "account",
-    "update", "secure", "security", "bank", "password", "confirm",
-    "wallet", "billing", "invoice", "suspend", "unlock", "webscr",
-]
-
-URL_SHORTENERS = [
-    "bit.ly", "tinyurl.com", "goo.gl", "t.co", "ow.ly", "is.gd",
-    "buff.ly", "rebrand.ly", "cutt.ly", "shorturl.at", "tiny.cc",
-]
-
-LONG_URL_THRESHOLD = 75      # characters
-MANY_SUBDOMAINS_THRESHOLD = 2
-
-COLOR_PHISHING = "#c0392b"   # red
-COLOR_LEGITIMATE = "#1e8449" # green
-COLOR_NEUTRAL = "#333333"
+# Words that often show up in phishing links.
+# Only used to show info to the user, NOT used by the model.
+KEYWORDS = ["login", "signin", "verify", "account", "update", "secure",
+            "bank", "password", "confirm", "billing", "suspend"]
 
 
-class PhishingDetectorGUI(tk.Tk):
+class PhishingGUI:
 
-    def __init__(self):
-        super().__init__()
-        self.title("ML - Phishing Website Detector")
-        self.geometry("1280x720")
-        self.minsize(1000, 620)
+    def __init__(self, root):
+        self.root = root
+        self.root.title("ML - Phishing Website Detector")
+        self.root.geometry("680x520")
+        self.root.minsize(560, 460)
 
-        self._build_gui()
-        self._load_predictor()
-
-    # ========================================================
-    # MODEL LOADING
-    # ========================================================
-
-    def _load_predictor(self):
-        """
-        Load the URL-only Random Forest once at startup.
-        If the model file is missing, disable the Analyze button.
-        """
+        # load the model once when the app starts
         try:
             self.predictor = PhishingPredictor()
-        except Exception as error:
+        except Exception as e:
             self.predictor = None
-            self.analyze_button.state(["disabled"])
-            self.status_label.config(
-                text="Model failed to load. See error message.",
-                foreground=COLOR_PHISHING,
-            )
-            messagebox.showerror(
-                "Model Error",
-                "Could not load the phishing detection model.\n\n"
-                f"{error}\n\n"
-                "Run 'python src/train_url_deployment_model.py' to create it.",
-            )
-            return
+            messagebox.showerror("Error", "Could not load model:\n" + str(e))
 
-        self.status_label.config(
-            text="Model loaded: URL-only Random Forest (15 features). "
-                 "Enter a URL and click Analyze.",
-            foreground=COLOR_NEUTRAL,
-        )
+        self.build_widgets()
 
-    # ========================================================
-    # LAYOUT
-    # ========================================================
+    def build_widgets(self):
+        frame = ttk.Frame(self.root, padding=12)
+        frame.pack(fill="both", expand=True)
 
-    def _build_gui(self):
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
+        # ---------- title ----------
+        ttk.Label(frame, text="Phishing Website Detector",
+                  font=("TkDefaultFont", 16, "bold")).pack(anchor="w")
+        ttk.Label(frame, text=" ML Using URL Features").pack(anchor="w")
+        ttk.Separator(frame).pack(fill="x", pady=8)
 
-        main = ttk.Frame(self, padding=16)
-        main.grid(row=0, column=0, sticky="nsew")
-        main.columnconfigure(0, weight=1)
-        main.rowconfigure(3, weight=1)
+        # ---------- url input ----------
+        input_row = ttk.Frame(frame)
+        input_row.pack(fill="x")
 
-        # Header
-        header = ttk.Frame(main, padding=(0, 0, 0, 10))
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
+        ttk.Label(input_row, text="Enter URL:").pack(side="left")
+        self.url_entry = ttk.Entry(input_row)
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=6)
+        self.url_entry.bind("<Return>", lambda e: self.check_url())
+        self.url_entry.focus()
 
-        title = ttk.Label(
-            header,
-            text="Phishing Website Detector",
-            font=("Segoe UI", 22, "bold")
-        )
-        title.grid(row=0, column=0, sticky="n", pady=(0, 4))
+        ttk.Button(input_row, text="Check", command=self.check_url).pack(side="left")
+        ttk.Button(input_row, text="Clear", command=self.clear).pack(side="left", padx=(5, 0))
 
-        # URL input card
-        input_group = ttk.LabelFrame(main, text="Enter a URL to analyze", padding=16)
-        input_group.grid(row=1, column=0, sticky="ew", pady=(0, 14))
-        input_group.columnconfigure(0, weight=1)
+        # ---------- result + details side by side ----------
+        middle = ttk.Frame(frame)
+        middle.pack(fill="x", pady=(10, 0))
+        middle.columnconfigure(0, weight=1)
+        middle.columnconfigure(1, weight=1)
 
-        input_row = ttk.Frame(input_group)
-        input_row.grid(row=0, column=0, sticky="ew")
-        input_row.columnconfigure(0, weight=1)
+        # result box
+        result_box = ttk.LabelFrame(middle, text="Result", padding=10)
+        result_box.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
-        self.url_var = tk.StringVar(value="")
+        self.prediction_lbl = ttk.Label(result_box, text="-", font=("TkDefaultFont", 14, "bold"))
+        self.prediction_lbl.pack(anchor="w")
 
-        self.url_entry = ttk.Entry(input_row, textvariable=self.url_var, font=("Segoe UI", 12))
-        self.url_entry.grid(row=0, column=0, sticky="ew", padx=(0, 12), ipady=6)
-        self.url_entry.bind("<Return>", lambda event: self.on_analyze_clicked())
-        self.url_entry.focus_set()
+        ttk.Label(result_box, text="Phishing risk:").pack(anchor="w", pady=(8, 0))
+        self.risk_bar = ttk.Progressbar(result_box, maximum=100, length=200)
+        self.risk_bar.pack(anchor="w", fill="x")
+        self.risk_lbl = ttk.Label(result_box, text="-")
+        self.risk_lbl.pack(anchor="w")
 
-        self.analyze_button = ttk.Button(
-            input_row,
-            text="Analyze",
-            command=self.on_analyze_clicked
-        )
-        self.analyze_button.grid(row=0, column=1, sticky="e", ipadx=16, ipady=4)
+        self.conf_lbl = ttk.Label(result_box, text="Confidence: -")
+        self.conf_lbl.pack(anchor="w", pady=(6, 0))
 
-        self.status_label = ttk.Label(input_group, text="Loading model...", font=("Segoe UI", 9))
-        self.status_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        # url details box
+        details_box = ttk.LabelFrame(middle, text="URL details", padding=10)
+        details_box.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
-        # Prediction result card
-        result_frame = ttk.Frame(main, padding=12, relief="groove", borderwidth=1)
-        result_frame.grid(row=2, column=0, sticky="ew", pady=(0, 14))
-        result_frame.columnconfigure(1, weight=1)
+        self.length_lbl = self.add_row(details_box, 0, "Length:")
+        self.domain_lbl = self.add_row(details_box, 1, "Domain:")
+        self.https_lbl = self.add_row(details_box, 2, "HTTPS:")
+        self.sub_lbl = self.add_row(details_box, 3, "Subdomains:")
+        self.ip_lbl = self.add_row(details_box, 4, "IP address:")
+        self.kw_lbl = self.add_row(details_box, 5, "Keywords:")
 
-        self.prediction_label = ttk.Label(
-            result_frame,
-            text="Prediction:  —",
-            font=("Segoe UI", 28, "bold")
-        )
-        self.prediction_label.grid(row=0, column=1, sticky="w", pady=(12, 4))
+        # ---------- warning signs ----------
+        warn_box = ttk.LabelFrame(frame, text="Warning signs (not used by the model)", padding=8)
+        warn_box.pack(fill="x", pady=(10, 0))
+        self.warn_lbl = ttk.Label(warn_box, text="-", wraplength=600, justify="left")
+        self.warn_lbl.pack(anchor="w")
 
-        self.risk_label = ttk.Label(
-            result_frame,
-            text="Risk Score:  —",
-            font=("Segoe UI", 24, "bold")
-        )
-        self.risk_label.grid(row=1, column=1, sticky="w", pady=(0, 4))
+        # ---------- history of checked urls ----------
+        history_box = ttk.LabelFrame(frame, text="History", padding=8)
+        history_box.pack(fill="both", expand=True, pady=(10, 0))
+        self.history = tk.Listbox(history_box, height=5)
+        self.history.pack(fill="both", expand=True)
 
-        self.confidence_label = ttk.Label(
-            result_frame,
-            text="Confidence:  —",
-            font=("Segoe UI", 14)
-        )
-        self.confidence_label.grid(row=2, column=1, sticky="w", pady=(0, 12))
+        # ---------- status bar ----------
+        self.status = ttk.Label(frame, text="Model loaded." if self.predictor else "Model not loaded.")
+        self.status.pack(anchor="w", pady=(6, 0))
 
-        # Bottom panels
-        bottom = ttk.Frame(main)
-        bottom.grid(row=3, column=0, sticky="nsew")
-        bottom.columnconfigure(0, weight=1)
-        bottom.columnconfigure(1, weight=1)
-        bottom.rowconfigure(0, weight=1)
+    def add_row(self, parent, row, text):
+        # makes a "name: value" row in a grid and returns the value label
+        ttk.Label(parent, text=text).grid(row=row, column=0, sticky="w", padx=(0, 8))
+        value = ttk.Label(parent, text="-", wraplength=200, justify="left")
+        value.grid(row=row, column=1, sticky="w")
+        return value
 
-        # Observations panel (filled after each analysis)
-        self.reasons_group = ttk.LabelFrame(bottom, text="URL Observations", padding=16)
-        self.reasons_group.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        self.reasons_group.columnconfigure(0, weight=1)
-        self.reason_labels = []
-        self._show_reasons(["•  No URL analyzed yet."])
-
-        # URL information panel
-        info_group = ttk.LabelFrame(bottom, text="URL Information", padding=16)
-        info_group.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
-        info_group.columnconfigure(2, weight=1)
-
-        info_rows = [
-            "URL",
-            "Length",
-            "Protocol",
-            "Domain",
-            "Path",
-            "Subdomains",
-            "Suspicious Keywords",
-            "IP Address",
-            "URL Shortened",
-        ]
-
-        self.info_value_labels = {}
-
-        for r, label in enumerate(info_rows):
-            key = ttk.Label(info_group, text=label, font=("Segoe UI", 10, "bold"))
-            key.grid(row=r, column=0, sticky="w", padx=(0, 16), pady=4)
-
-            colon = ttk.Label(info_group, text=":")
-            colon.grid(row=r, column=1, sticky="w", padx=(0, 12), pady=4)
-
-            val = ttk.Label(info_group, text="—", font=("Segoe UI", 10), wraplength=420, justify="left")
-            val.grid(row=r, column=2, sticky="w", pady=4)
-            self.info_value_labels[label] = val
-
-    # ========================================================
-    # ANALYZE BUTTON
-    # ========================================================
-
-    def on_analyze_clicked(self):
-        """
-        Backend integration:
-        read the URL, run the Random Forest, and update every panel.
-        """
+    def check_url(self):
         if self.predictor is None:
+            messagebox.showerror("Error", "Model is not loaded.")
             return
 
-        url = self.url_var.get().strip()
-
-        # --- Input validation ---
-        if not url:
-            messagebox.showwarning("No URL", "Please enter a URL to analyze.")
+        url = self.url_entry.get().strip()
+        if url == "":
+            messagebox.showwarning("Warning", "Please enter a URL.")
             return
-
         if " " in url:
-            messagebox.showwarning("Invalid URL", "A URL cannot contain spaces.")
+            messagebox.showwarning("Warning", "URL can't have spaces.")
             return
 
-        # --- Prediction ---
         try:
             result = self.predictor.predict(url)
-        except Exception as error:
-            messagebox.showerror("Analysis Error", f"Could not analyze this URL.\n\n{error}")
+        except Exception as e:
+            messagebox.showerror("Error", "Something went wrong:\n" + str(e))
             return
 
-        parsed = urlparse(result["url"])
-        if not parsed.hostname:
-            messagebox.showwarning("Invalid URL", "Could not find a domain in this URL.")
-            return
+        f = result["features"]
+        domain = urlparse(result["url"]).hostname or ""
 
-        self._show_prediction(result)
-        self._show_url_information(result, parsed)
-        self._show_reasons(self._build_observations(result, parsed))
+        # result section (red = phishing, green = legit)
+        if result["prediction"] == 0:
+            self.prediction_lbl.config(text="PHISHING", foreground="red")
+        else:
+            self.prediction_lbl.config(text="LEGITIMATE", foreground="green")
+        self.risk_bar["value"] = result["risk_score"]
+        self.risk_lbl.config(text=f"{result['risk_score']:.2f}%")
+        self.conf_lbl.config(text=f"Confidence: {result['confidence']:.2f}%")
 
-        self.status_label.config(
-            text=f"Analyzed: {result['url']}",
-            foreground=COLOR_NEUTRAL,
-        )
+        # url details section
+        found = [k for k in KEYWORDS if k in result["url"].lower()]
 
-    # ========================================================
-    # RESULT DISPLAY HELPERS
-    # ========================================================
+        self.length_lbl.config(text=str(f["URLLength"]) + " chars")
+        self.domain_lbl.config(text=domain)
+        self.https_lbl.config(text="Yes" if f["IsHTTPS"] == 1 else "No")
+        self.sub_lbl.config(text="-" if f["IsDomainIP"] == 1 else str(f["NoOfSubDomain"]))
+        self.ip_lbl.config(text="Yes" if f["IsDomainIP"] == 1 else "No")
+        self.kw_lbl.config(text=", ".join(found) if found else "none")
 
-    def _show_prediction(self, result):
-        """Prediction, risk score, and confidence."""
-        is_phishing = result["prediction"] == 0
-        color = COLOR_PHISHING if is_phishing else COLOR_LEGITIMATE
-
-        self.prediction_label.config(
-            text=f"Prediction:  {result['label']}",
-            foreground=color,
-        )
-        self.risk_label.config(
-            text=f"Risk Score:  {result['risk_score']:.2f}%",
-            foreground=color,
-        )
-        self.confidence_label.config(
-            text=f"Confidence:  {result['confidence']:.2f}%",
-        )
-
-    def _show_url_information(self, result, parsed):
-        """Fill the URL Information panel from the analyzed URL."""
-        features = result["features"]
-        url = result["url"]
-        domain = parsed.hostname or ""
-        keywords = self._find_keywords(url)
-
-        values = {
-            "URL": url,
-            "Length": f"{features['URLLength']} characters",
-            "Protocol": parsed.scheme.upper(),
-            "Domain": domain,
-            "Path": parsed.path or "/",
-            "Subdomains": (
-                "N/A (IP address)" if features["IsDomainIP"] == 1
-                else str(features["NoOfSubDomain"])
-            ),
-            "Suspicious Keywords": ", ".join(keywords) if keywords else "None found",
-            "IP Address": "Used" if features["IsDomainIP"] == 1 else "Not used",
-            "URL Shortened": "Yes" if self._is_shortened(domain) else "No",
-        }
-
-        for label, value in values.items():
-            self.info_value_labels[label].config(text=value)
-
-    def _build_observations(self, result, parsed):
-        """
-        Human-readable notes about the URL.
-
-        These describe common phishing warning signs found in the URL.
-        They help the user understand the URL, but they are not the
-        model's internal reasoning.
-        """
-        features = result["features"]
-        domain = parsed.hostname or ""
-        notes = []
-
-        if features["IsHTTPS"] == 0:
-            notes.append("•  Does not use HTTPS")
-        if features["IsDomainIP"] == 1:
-            notes.append("•  Uses an IP address instead of a domain name")
-        if features["URLLength"] > LONG_URL_THRESHOLD:
-            notes.append(f"•  Unusually long URL ({features['URLLength']} characters)")
-        if (features["IsDomainIP"] == 0
-                and features["NoOfSubDomain"] >= MANY_SUBDOMAINS_THRESHOLD):
-            notes.append(f"•  Multiple subdomains ({features['NoOfSubDomain']})")
-        if features["NoOfDegitsInURL"] >= 5:
-            notes.append(f"•  Many digits in the URL ({features['NoOfDegitsInURL']})")
+        # simple warning signs (just for the user, the model decides the prediction)
+        warnings = []
+        if f["IsHTTPS"] == 0:
+            warnings.append("no HTTPS")
+        if f["IsDomainIP"] == 1:
+            warnings.append("uses an IP address instead of a domain")
+        if f["URLLength"] > 75:
+            warnings.append("long URL")
+        if f["NoOfDegitsInURL"] >= 5:
+            warnings.append("many digits")
         if "@" in result["url"]:
-            notes.append('•  Contains "@" (can hide the real destination)')
-        path_specials = self._count_path_specials(parsed)
-        if path_specials >= 4:
-            notes.append(f"•  Many special characters in the path/query ({path_specials})")
-        if self._is_shortened(domain):
-            notes.append("•  Uses a URL shortener (real destination is hidden)")
+            warnings.append("has @ symbol")
+        if found:
+            warnings.append("suspicious keywords")
+        self.warn_lbl.config(text=", ".join(warnings) if warnings else "none found")
 
-        keywords = self._find_keywords(result["url"])
-        if keywords:
-            quoted = ", ".join(f'"{k}"' for k in keywords)
-            notes.append(f"•  Suspicious keyword(s): {quoted}")
+        # add to history (newest on top)
+        self.history.insert(0, f"{result['label']:<11} {result['risk_score']:6.2f}%   {result['url']}")
 
-        if not notes:
-            notes.append("•  No common phishing warning signs found in the URL")
+        self.status.config(text="Done.")
 
-        notes.append(
-            f"•  Model: {result['phishing_probability']:.2f}% phishing / "
-            f"{result['legitimate_probability']:.2f}% legitimate"
-        )
-        return notes
-
-    def _show_reasons(self, reasons):
-        """Replace the lines in the Observations panel."""
-        for lbl in self.reason_labels:
-            lbl.destroy()
-        self.reason_labels = []
-
-        for i, reason in enumerate(reasons):
-            lbl = ttk.Label(
-                self.reasons_group,
-                text=reason,
-                font=("Segoe UI", 11),
-                wraplength=520,
-                justify="left",
-            )
-            lbl.grid(row=i, column=0, sticky="w", pady=6)
-            self.reason_labels.append(lbl)
-
-    # ========================================================
-    # SMALL UTILITIES
-    # ========================================================
-
-    @staticmethod
-    def _find_keywords(url):
-        url_lower = url.lower()
-        return [word for word in SUSPICIOUS_KEYWORDS if word in url_lower]
-
-    @staticmethod
-    def _count_path_specials(parsed):
-        """
-        Count special characters after the domain (path + query),
-        ignoring "/" separators. The "https://" and the dots in the
-        domain are not counted, since every URL has them.
-        """
-        text = parsed.path + parsed.query
-        return sum(1 for ch in text if not ch.isalnum() and ch != "/")
-
-    @staticmethod
-    def _is_shortened(domain):
-        domain = domain.lower()
-        if domain.startswith("www."):
-            domain = domain[4:]
-        return domain in URL_SHORTENERS
+    def clear(self):
+        self.url_entry.delete(0, "end")
+        for lbl in [self.prediction_lbl, self.risk_lbl, self.length_lbl,
+                    self.domain_lbl, self.https_lbl, self.sub_lbl,
+                    self.ip_lbl, self.kw_lbl, self.warn_lbl]:
+            lbl.config(text="-", foreground="")
+        self.conf_lbl.config(text="Confidence: -")
+        self.risk_bar["value"] = 0
+        self.status.config(text="Model loaded." if self.predictor else "Model not loaded.")
 
 
 if __name__ == "__main__":
-    app = PhishingDetectorGUI()
-    app.mainloop()
+    root = tk.Tk()
+    app = PhishingGUI(root)
+    root.mainloop()
