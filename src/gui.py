@@ -137,10 +137,17 @@ class PhishingGUI:
         domain = urlparse(result["url"]).hostname or ""
 
         # result section (red = phishing, green = legit)
-        if result["prediction"] == 0:
-            self.prediction_lbl.config(text="PHISHING", foreground="red")
+        # 30-70% risk = model is not sure, so show SUSPICIOUS in yellow
+        risk = result["risk_score"]
+        if risk >= 70:
+            status = "PHISHING"
+            self.prediction_lbl.config(text=status, foreground="red")
+        elif risk >= 30:
+            status = "SUSPICIOUS"
+            self.prediction_lbl.config(text=status, foreground="#c9a000")
         else:
-            self.prediction_lbl.config(text="LEGITIMATE", foreground="green")
+            status = "LEGITIMATE"
+            self.prediction_lbl.config(text=status, foreground="green")
         self.risk_bar["value"] = result["risk_score"]
         self.risk_lbl.config(text=f"{result['risk_score']:.2f}%")
         self.conf_lbl.config(text=f"Confidence: {result['confidence']:.2f}%")
@@ -172,7 +179,7 @@ class PhishingGUI:
         self.warn_lbl.config(text=", ".join(warnings) if warnings else "none found")
 
         # add to history (newest on top)
-        self.history.insert(0, f"{result['label']:<11} {result['risk_score']:6.2f}%   {result['url']}")
+        self.history.insert(0, f"{status:<11} {result['risk_score']:6.2f}%   {result['url']}")
 
         self.status.config(text="Done.")
 
