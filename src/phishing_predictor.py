@@ -32,9 +32,11 @@ def normalize_url(url):
 
     url = str(url).strip()
 
-    if not url.startswith(
-        ("http://", "https://")
-    ):
+    # Accept uppercase prefixes without changing case-sensitive paths or query values.
+    if url.lower().startswith(("http://", "https://")):
+        scheme, address = url.split("://", 1)
+        url = scheme.lower() + "://" + address
+    else:
         url = "https://" + url
 
     return url
@@ -608,6 +610,30 @@ class PhishingPredictor:
 # ============================================================
 # 4. TERMINAL TEST
 # ============================================================
+
+class LogisticPredictor:
+    def __init__(self):
+        path = Path(__file__).resolve().parent.parent / "models" / "url_logistic_model.pkl"
+        self.model = joblib.load(path)
+
+    def predict(self, url):
+        url = normalize_url(url)
+        features = extract_url_features(url)
+        model_input = pd.DataFrame([features])
+        prediction = int(self.model.predict(model_input)[0])
+        probabilities = self.model.predict_proba(model_input)[0]
+        classes = list(self.model.classes_)
+        phishing = float(probabilities[classes.index(0)])
+        confidence = float(probabilities[classes.index(prediction)])
+        return {
+            "url": url,
+            "label": "PHISHING" if prediction == 0 else "LEGITIMATE",
+            "prediction": prediction,
+            "risk_score": phishing * 100,
+            "confidence": confidence * 100,
+            "features": features,
+        }
+
 
 if __name__ == "__main__":
 

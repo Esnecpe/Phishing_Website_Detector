@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
@@ -83,6 +84,30 @@ def clean_data(df):
     print("Rows removed:", original_rows - cleaned_rows)
 
     return df
+
+
+def check_numeric_data(X_train, X_test):
+    print("\n===== NUMERIC INPUT CHECKS =====")
+    # Final input check for both the dataset models and the URL-only models.
+    for name, data in [("Training", X_train), ("Testing", X_test)]:
+        invalid = (~np.isfinite(data)).any(axis=1) | (data < 0).any(axis=1)
+        print(name, "rows with invalid numbers:", invalid.sum())
+        if invalid.any():
+            raise ValueError("Correct invalid inputs before fitting the model.")
+
+    # Report constant columns without changing the feature list.
+    constants = X_train.columns[X_train.nunique() <= 1].tolist()
+    print("Constant training columns:", constants)
+    # Use training data only to flag large z-scores; skip columns with at most two values.
+    # Keep flagged values because unusual URL measurements may be useful phishing signals.
+    measurements = X_train.loc[:, X_train.nunique() > 2]
+    spread = measurements.std(ddof=0).replace(0, np.nan)
+    unusual = ((measurements - measurements.mean()) / spread).abs() > 3
+    counts = unusual.sum()
+    print("Potential outliers per training column (more than 3 standard deviations):")
+    print(counts[counts > 0].to_string())
+    print("Potential outlier rows:", unusual.any(axis=1).sum())
+    print("Unusual values retained: a large value alone does not prove a data error.")
 
 
 def prepare_features(
@@ -171,6 +196,9 @@ def preprocess_data(
         X,
         y,
     )
+
+    # Check numeric inputs and report potential training outliers before fitting either model.
+    check_numeric_data(X_train, X_test)
 
     print("\n===== PREPROCESSED DATA =====")
     print("Number of features:", X.shape[1])

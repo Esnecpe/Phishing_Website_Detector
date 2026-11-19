@@ -1,12 +1,16 @@
 from pathlib import Path
-from urllib.parse import urlparse
-import ipaddress
-import re
+from phishing_predictor import extract_url_features
+from data_preprocessing import clean_data, check_numeric_data
+import warnings
 
 import joblib
 import pandas as pd
 
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     accuracy_score,
@@ -15,6 +19,7 @@ from sklearn.metrics import (
     f1_score,
     confusion_matrix,
     classification_report,
+    roc_auc_score,
 )
 
 
@@ -35,6 +40,14 @@ MODEL_PATH = (
     / "models"
     / "url_random_forest.pkl"
 )
+
+LOGISTIC_MODEL_PATH = (
+    PROJECT_ROOT
+    / "models"
+    / "url_logistic_model.pkl"
+)
+
+MODEL_PATH.parent.mkdir(exist_ok=True)
 
 
 # ============================================================
@@ -61,831 +74,665 @@ URL_FEATURES = [
 
 TARGET_COLUMN = "label"
 
+def main():
+    # ============================================================
+    # 4. LOAD DATASET
+    # ============================================================
 
-# ============================================================
-# 3. URL FEATURE EXTRACTION
-# ============================================================
+    print(
+        "\n===== LOADING DATASET ====="
+    )
 
-def normalize_url(url):
-    """
-    Ensure the URL can be parsed consistently.
-    """
+    df = pd.read_csv(
+        DATASET_PATH
+    )
 
-    url = str(url).strip()
+    print(
+        "Original rows:",
+        df.shape[0]
+    )
 
-    if not url.startswith(
-        ("http://", "https://")
-    ):
-        url = "https://" + url
-
-    return url
-
-
-def extract_url_features(url):
-    """
-    Extract the exact same 15 URL-only features
-    that will later be used during live deployment.
-    """
-
-    url = normalize_url(url)
-
-    parsed = urlparse(url)
-
-    domain = (
-        parsed.hostname
-        or ""
+    print(
+        "Original columns:",
+        df.shape[1]
     )
 
 
-    # --------------------------------------------------------
-    # Basic URL / domain values
-    # --------------------------------------------------------
+    # ============================================================
+    # 5. CLEAN DATASET
+    # ============================================================
 
-    url_length = len(url)
+    print(
+        "\n===== CLEANING DATASET ====="
+    )
 
-    domain_length = len(domain)
+    # Check only URL and label here; the numeric inputs are rebuilt from URL text below.
+    df = clean_data(df, url_only=True)
 
 
-    # --------------------------------------------------------
-    # IsDomainIP
-    # --------------------------------------------------------
+    # ============================================================
+    # 6. REBUILD URL FEATURES
+    # ============================================================
 
-    try:
-        ipaddress.ip_address(
-            domain
+    print(
+        "\n===== EXTRACTING URL FEATURES ====="
+    )
+
+    print(
+        "This may take a little time..."
+    )
+
+
+    feature_rows = []
+
+
+    for url in df["URL"]:
+
+        features = (
+            extract_url_features(
+                url
+            )
         )
 
-        is_domain_ip = 1
-
-    except ValueError:
-        is_domain_ip = 0
-
-
-    # --------------------------------------------------------
-    # TLDLength
-    # --------------------------------------------------------
-
-    domain_parts = domain.split(".")
-
-    if len(domain_parts) > 1:
-
-        tld_length = len(
-            domain_parts[-1]
-        )
-
-    else:
-
-        tld_length = 0
-
-
-    # --------------------------------------------------------
-    # NoOfSubDomain
-    # --------------------------------------------------------
-
-    if len(domain_parts) <= 2:
-
-        subdomain_count = 0
-
-    else:
-
-        subdomain_count = (
-            len(domain_parts)
-            - 2
+        feature_rows.append(
+            features
         )
 
 
-    # --------------------------------------------------------
-    # Letters
-    # --------------------------------------------------------
-
-    letter_count = sum(
-        character.isalpha()
-        for character in url
+    X = pd.DataFrame(
+        feature_rows
     )
 
-    if url_length > 0:
 
-        letter_ratio = (
-            letter_count
-            / url_length
+    y = (
+        df[TARGET_COLUMN]
+        .reset_index(drop=True)
+    )
+
+
+    print(
+        "Feature extraction complete."
+    )
+
+    print(
+        "X shape:",
+        X.shape
+    )
+
+    print(
+        "y shape:",
+        y.shape
+    )
+
+    print(
+        "Feature count:",
+        X.shape[1]
+    )
+
+
+    # ============================================================
+    # 7. VERIFY FEATURE ORDER
+    # ============================================================
+
+    print(
+        "\n===== VERIFYING FEATURES ====="
+    )
+
+    if list(X.columns) != URL_FEATURES:
+
+        raise ValueError(
+            "Extracted URL feature order "
+            "does not match URL_FEATURES."
         )
 
-    else:
 
-        letter_ratio = 0.0
-
-
-    # --------------------------------------------------------
-    # Digits
-    # --------------------------------------------------------
-
-    digit_count = sum(
-        character.isdigit()
-        for character in url
-    )
-
-    if url_length > 0:
-
-        digit_ratio = (
-            digit_count
-            / url_length
-        )
-
-    else:
-
-        digit_ratio = 0.0
-
-
-    # --------------------------------------------------------
-    # Special URL characters
-    # --------------------------------------------------------
-
-    equals_count = (
-        url.count("=")
-    )
-
-    question_mark_count = (
-        url.count("?")
-    )
-
-    ampersand_count = (
-        url.count("&")
+    print(
+        "URL feature order verified."
     )
 
 
-    special_characters = re.findall(
-        r"[^A-Za-z0-9]",
-        url
+    # ============================================================
+    # 8. TARGET DISTRIBUTION
+    # ============================================================
+
+    print(
+        "\n===== TARGET DISTRIBUTION ====="
     )
 
-    other_special_count = len(
-        special_characters
-    )
-
-
-    if url_length > 0:
-
-        special_char_ratio = (
-            other_special_count
-            / url_length
-        )
-
-    else:
-
-        special_char_ratio = 0.0
-
-
-    # --------------------------------------------------------
-    # HTTPS
-    # --------------------------------------------------------
-
-    is_https = (
-        1
-        if parsed.scheme == "https"
-        else 0
+    print(
+        y.value_counts()
+        .sort_index()
     )
 
 
-    # --------------------------------------------------------
-    # Feature dictionary
-    # --------------------------------------------------------
+    # ============================================================
+    # 9. TRAIN / TEST SPLIT
+    # ============================================================
 
-    features = {
-        "URLLength":
-            url_length,
-
-        "DomainLength":
-            domain_length,
-
-        "IsDomainIP":
-            is_domain_ip,
-
-        "TLDLength":
-            tld_length,
-
-        "NoOfSubDomain":
-            subdomain_count,
-
-        "NoOfLettersInURL":
-            letter_count,
-
-        "LetterRatioInURL":
-            letter_ratio,
-
-        "NoOfDegitsInURL":
-            digit_count,
-
-        "DegitRatioInURL":
-            digit_ratio,
-
-        "NoOfEqualsInURL":
-            equals_count,
-
-        "NoOfQMarkInURL":
-            question_mark_count,
-
-        "NoOfAmpersandInURL":
-            ampersand_count,
-
-        "NoOfOtherSpecialCharsInURL":
-            other_special_count,
-
-        "SpacialCharRatioInURL":
-            special_char_ratio,
-
-        "IsHTTPS":
-            is_https,
-    }
-
-    return features
-
-
-# ============================================================
-# 4. LOAD DATASET
-# ============================================================
-
-print(
-    "\n===== LOADING DATASET ====="
-)
-
-df = pd.read_csv(
-    DATASET_PATH
-)
-
-print(
-    "Original rows:",
-    df.shape[0]
-)
-
-print(
-    "Original columns:",
-    df.shape[1]
-)
-
-
-# ============================================================
-# 5. CLEAN DATASET
-# ============================================================
-
-print(
-    "\n===== CLEANING DATASET ====="
-)
-
-original_rows = (
-    df.shape[0]
-)
-
-
-# Remove duplicate URLs.
-df = df.drop_duplicates(
-    subset=["URL"]
-)
-
-
-# Keep only rows needed for URL-only deployment.
-df = df[
-    [
-        "URL",
-        TARGET_COLUMN,
-    ]
-].copy()
-
-
-# Remove missing values.
-df = df.dropna()
-
-
-cleaned_rows = (
-    df.shape[0]
-)
-
-
-print(
-    "Rows after cleaning:",
-    cleaned_rows
-)
-
-print(
-    "Rows removed:",
-    original_rows
-    - cleaned_rows
-)
-
-
-# ============================================================
-# 6. REBUILD URL FEATURES
-# ============================================================
-
-print(
-    "\n===== EXTRACTING URL FEATURES ====="
-)
-
-print(
-    "This may take a little time..."
-)
-
-
-feature_rows = []
-
-
-for url in df["URL"]:
-
-    features = (
-        extract_url_features(
-            url
-        )
-    )
-
-    feature_rows.append(
-        features
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.20,
+        random_state=42,
+        stratify=y,
     )
 
 
-X = pd.DataFrame(
-    feature_rows
-)
+    print(
+        "\n===== TRAIN / TEST SPLIT ====="
+    )
+
+    print(
+        "Training samples:",
+        X_train.shape[0]
+    )
+
+    print(
+        "Testing samples:",
+        X_test.shape[0]
+    )
+
+    print(
+        "Features:",
+        X_train.shape[1]
+    )
+
+    check_numeric_data(X_train, X_test)
 
 
-y = (
-    df[TARGET_COLUMN]
-    .reset_index(drop=True)
-)
+    # ============================================================
+    # 10. CREATE RANDOM FOREST
+    # ============================================================
 
-
-print(
-    "Feature extraction complete."
-)
-
-print(
-    "X shape:",
-    X.shape
-)
-
-print(
-    "y shape:",
-    y.shape
-)
-
-print(
-    "Feature count:",
-    X.shape[1]
-)
-
-
-# ============================================================
-# 7. VERIFY FEATURE ORDER
-# ============================================================
-
-print(
-    "\n===== VERIFYING FEATURES ====="
-)
-
-if list(X.columns) != URL_FEATURES:
-
-    raise ValueError(
-        "Extracted URL feature order "
-        "does not match URL_FEATURES."
+    model = RandomForestClassifier(
+        n_estimators=100,
+        random_state=42,
+        n_jobs=-1,
     )
 
 
-print(
-    "URL feature order verified."
-)
+    # ============================================================
+    # 11. TRAIN MODEL
+    # ============================================================
+
+    print(
+        "\n===== TRAINING URL-ONLY RANDOM FOREST ====="
+    )
+
+    model.fit(
+        X_train,
+        y_train
+    )
+
+    print(
+        "Training complete."
+    )
 
 
-# ============================================================
-# 8. TARGET DISTRIBUTION
-# ============================================================
+    # ============================================================
+    # 12. MAKE PREDICTIONS
+    # ============================================================
 
-print(
-    "\n===== TARGET DISTRIBUTION ====="
-)
-
-print(
-    y.value_counts()
-    .sort_index()
-)
+    y_pred = model.predict(
+        X_test
+    )
 
 
-# ============================================================
-# 9. TRAIN / TEST SPLIT
-# ============================================================
+    # ============================================================
+    # 13. CALCULATE METRICS
+    # ============================================================
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.20,
-    random_state=42,
-    stratify=y,
-)
-
-
-print(
-    "\n===== TRAIN / TEST SPLIT ====="
-)
-
-print(
-    "Training samples:",
-    X_train.shape[0]
-)
-
-print(
-    "Testing samples:",
-    X_test.shape[0]
-)
-
-print(
-    "Features:",
-    X_train.shape[1]
-)
-
-
-# ============================================================
-# 10. CREATE RANDOM FOREST
-# ============================================================
-
-model = RandomForestClassifier(
-    n_estimators=100,
-    random_state=42,
-    n_jobs=-1,
-)
-
-
-# ============================================================
-# 11. TRAIN MODEL
-# ============================================================
-
-print(
-    "\n===== TRAINING URL-ONLY RANDOM FOREST ====="
-)
-
-model.fit(
-    X_train,
-    y_train
-)
-
-print(
-    "Training complete."
-)
-
-
-# ============================================================
-# 12. MAKE PREDICTIONS
-# ============================================================
-
-y_pred = model.predict(
-    X_test
-)
-
-
-# ============================================================
-# 13. CALCULATE METRICS
-# ============================================================
-
-accuracy = accuracy_score(
-    y_test,
-    y_pred
-)
-
-precision = precision_score(
-    y_test,
-    y_pred
-)
-
-recall = recall_score(
-    y_test,
-    y_pred
-)
-
-f1 = f1_score(
-    y_test,
-    y_pred
-)
-
-
-print(
-    "\n===== URL-ONLY MODEL RESULTS ====="
-)
-
-print(
-    f"Accuracy:  {accuracy:.6f}"
-)
-
-print(
-    f"Precision: {precision:.6f}"
-)
-
-print(
-    f"Recall:    {recall:.6f}"
-)
-
-print(
-    f"F1 Score:  {f1:.6f}"
-)
-
-
-# ============================================================
-# 14. CONFUSION MATRIX
-# ============================================================
-
-cm = confusion_matrix(
-    y_test,
-    y_pred
-)
-
-
-print(
-    "\n===== CONFUSION MATRIX ====="
-)
-
-print(
-    cm
-)
-
-
-# ============================================================
-# 15. CLASSIFICATION REPORT
-# ============================================================
-
-print(
-    "\n===== CLASSIFICATION REPORT ====="
-)
-
-print(
-    classification_report(
+    accuracy = accuracy_score(
         y_test,
         y_pred
     )
-)
 
-
-# ============================================================
-# 16. FEATURE IMPORTANCE
-# ============================================================
-
-feature_importance = pd.DataFrame(
-    {
-        "Feature":
-            X_train.columns,
-
-        "Importance":
-            model.feature_importances_,
-    }
-)
-
-
-feature_importance = (
-    feature_importance
-    .sort_values(
-        by="Importance",
-        ascending=False
+    precision = precision_score(
+        y_test,
+        y_pred
     )
-)
 
+    recall = recall_score(
+        y_test,
+        y_pred
+    )
 
-print(
-    "\n===== URL FEATURE IMPORTANCE ====="
-)
+    f1 = f1_score(
+        y_test,
+        y_pred
+    )
 
-print(
-    feature_importance
-)
 
+    print(
+        "\n===== URL-ONLY MODEL RESULTS ====="
+    )
 
-# ============================================================
-# 17. LABEL MAPPING
-# ============================================================
+    print(
+        f"Accuracy:  {accuracy:.6f}"
+    )
 
-label_mapping = {
-    0: "PHISHING",
-    1: "LEGITIMATE",
-}
+    print(
+        f"Precision: {precision:.6f}"
+    )
 
+    print(
+        f"Recall:    {recall:.6f}"
+    )
 
-# ============================================================
-# 18. EVALUATION METADATA
-# ============================================================
+    print(
+        f"F1 Score:  {f1:.6f}"
+    )
 
-evaluation_metrics = {
-    "accuracy":
-        float(accuracy),
 
-    "precision":
-        float(precision),
+    # ============================================================
+    # 14. CONFUSION MATRIX
+    # ============================================================
 
-    "recall":
-        float(recall),
+    cm = confusion_matrix(
+        y_test,
+        y_pred
+    )
 
-    "f1_score":
-        float(f1),
 
-    "confusion_matrix":
-        cm.tolist(),
-}
+    print(
+        "\n===== CONFUSION MATRIX ====="
+    )
 
+    print(
+        cm
+    )
 
-# ============================================================
-# 19. CREATE MODEL PACKAGE
-# ============================================================
 
-model_package = {
+    # ============================================================
+    # 15. CLASSIFICATION REPORT
+    # ============================================================
 
-    "model":
-        model,
+    print(
+        "\n===== CLASSIFICATION REPORT ====="
+    )
 
-    "feature_names":
-        URL_FEATURES,
+    print(
+        classification_report(
+            y_test,
+            y_pred
+        )
+    )
 
-    "label_mapping":
-        label_mapping,
 
-    "evaluation_metrics":
-        evaluation_metrics,
+    # ============================================================
+    # 16. FEATURE IMPORTANCE
+    # ============================================================
 
-    "model_type":
-        "RandomForestClassifier",
+    feature_importance = pd.DataFrame(
+        {
+            "Feature":
+                X_train.columns,
 
-    "deployment_type":
-        "URL_ONLY",
+            "Importance":
+                model.feature_importances_,
+        }
+    )
 
-    "n_estimators":
-        model.n_estimators,
 
-    "feature_count":
-        len(URL_FEATURES),
-}
+    feature_importance = (
+        feature_importance
+        .sort_values(
+            by="Importance",
+            ascending=False
+        )
+    )
 
 
-# ============================================================
-# 20. SAVE MODEL
-# ============================================================
+    print(
+        "\n===== URL FEATURE IMPORTANCE ====="
+    )
 
-print(
-    "\n===== SAVING URL DEPLOYMENT MODEL ====="
-)
+    print(
+        feature_importance
+    )
 
-joblib.dump(
-    model_package,
-    MODEL_PATH
-)
 
+    # ============================================================
+    # 17. LABEL MAPPING
+    # ============================================================
 
-print(
-    "Saved to:"
-)
+    label_mapping = {
+        0: "PHISHING",
+        1: "LEGITIMATE",
+    }
 
-print(
-    MODEL_PATH
-)
 
+    # ============================================================
+    # 18. EVALUATION METADATA
+    # ============================================================
 
-# ============================================================
-# 21. VERIFY SAVED MODEL
-# ============================================================
+    evaluation_metrics = {
+        "accuracy":
+            float(accuracy),
 
-print(
-    "\n===== VERIFYING SAVED MODEL ====="
-)
-
-loaded_package = joblib.load(
-    MODEL_PATH
-)
-
-
-loaded_model = (
-    loaded_package["model"]
-)
-
-loaded_features = (
-    loaded_package["feature_names"]
-)
-
-loaded_labels = (
-    loaded_package["label_mapping"]
-)
-
-
-print(
-    "Loaded model:",
-    type(loaded_model).__name__
-)
-
-print(
-    "Model expects features:",
-    loaded_model.n_features_in_
-)
-
-print(
-    "Saved feature names:",
-    len(loaded_features)
-)
-
-print(
-    "Deployment type:",
-    loaded_package[
-        "deployment_type"
-    ]
-)
-
-print(
-    "Label mapping:",
-    loaded_labels
-)
-
-
-# ============================================================
-# 22. SAFETY CHECKS
-# ============================================================
-
-assert (
-    loaded_model.n_features_in_
-    == 15
-)
-
-assert (
-    len(loaded_features)
-    == 15
-)
-
-assert (
-    loaded_features
-    == URL_FEATURES
-)
-
-assert (
-    loaded_labels[0]
-    == "PHISHING"
-)
-
-assert (
-    loaded_labels[1]
-    == "LEGITIMATE"
-)
-
-
-print(
-    "\nURL deployment model "
-    "verified successfully."
-)
-
-
-# ============================================================
-# 23. FINAL SUMMARY
-# ============================================================
-
-print(
-    "\n===== URL DEPLOYMENT MODEL SUMMARY ====="
-)
-
-print(
-    "Model:",
-    type(model).__name__
-)
-
-print(
-    "Trees:",
-    model.n_estimators
-)
-
-print(
-    "Deployment type:",
-    "URL_ONLY"
-)
-
-print(
-    "Features:",
-    len(URL_FEATURES)
-)
-
-print(
-    "Training samples:",
-    X_train.shape[0]
-)
-
-print(
-    "Testing samples:",
-    X_test.shape[0]
-)
-
-print(
-    "Label 0:",
-    label_mapping[0]
-)
-
-print(
-    "Label 1:",
-    label_mapping[1]
-)
-
-print(
-    f"Accuracy: {accuracy:.6f}"
-)
-
-print(
-    f"F1 Score: {f1:.6f}"
-)
-
-print(
-    "\nURL-only deployment model "
-    "is ready for testing."
-)
+        "precision":
+            float(precision),
+
+        "recall":
+            float(recall),
+
+        "f1_score":
+            float(f1),
+
+        "confusion_matrix":
+            cm.tolist(),
+    }
+
+
+    # ============================================================
+    # 19. CREATE MODEL PACKAGE
+    # ============================================================
+
+    model_package = {
+
+        "model":
+            model,
+
+        "feature_names":
+            URL_FEATURES,
+
+        "label_mapping":
+            label_mapping,
+
+        "evaluation_metrics":
+            evaluation_metrics,
+
+        "model_type":
+            "RandomForestClassifier",
+
+        "deployment_type":
+            "URL_ONLY",
+
+        "n_estimators":
+            model.n_estimators,
+
+        "feature_count":
+            len(URL_FEATURES),
+    }
+
+
+    # ============================================================
+    # 20. SAVE MODEL
+    # ============================================================
+
+    print(
+        "\n===== SAVING URL DEPLOYMENT MODEL ====="
+    )
+
+    joblib.dump(
+        model_package,
+        MODEL_PATH
+    )
+
+
+    print(
+        "Saved to:"
+    )
+
+    print(
+        MODEL_PATH
+    )
+
+
+    # ============================================================
+    # 21. VERIFY SAVED MODEL
+    # ============================================================
+
+    print(
+        "\n===== VERIFYING SAVED MODEL ====="
+    )
+
+    loaded_package = joblib.load(
+        MODEL_PATH
+    )
+
+
+    loaded_model = (
+        loaded_package["model"]
+    )
+
+    loaded_features = (
+        loaded_package["feature_names"]
+    )
+
+    loaded_labels = (
+        loaded_package["label_mapping"]
+    )
+
+
+    print(
+        "Loaded model:",
+        type(loaded_model).__name__
+    )
+
+    print(
+        "Model expects features:",
+        loaded_model.n_features_in_
+    )
+
+    print(
+        "Saved feature names:",
+        len(loaded_features)
+    )
+
+    print(
+        "Deployment type:",
+        loaded_package[
+            "deployment_type"
+        ]
+    )
+
+    print(
+        "Label mapping:",
+        loaded_labels
+    )
+
+
+    # ============================================================
+    # 22. SAFETY CHECKS
+    # ============================================================
+
+    assert (
+        loaded_model.n_features_in_
+        == 15
+    )
+
+    assert (
+        len(loaded_features)
+        == 15
+    )
+
+    assert (
+        loaded_features
+        == URL_FEATURES
+    )
+
+    assert (
+        loaded_labels[0]
+        == "PHISHING"
+    )
+
+    assert (
+        loaded_labels[1]
+        == "LEGITIMATE"
+    )
+
+
+    print(
+        "\nURL deployment model "
+        "verified successfully."
+    )
+
+
+    # ============================================================
+    # 23. FINAL SUMMARY
+    # ============================================================
+
+    print(
+        "\n===== URL DEPLOYMENT MODEL SUMMARY ====="
+    )
+
+    print(
+        "Model:",
+        type(model).__name__
+    )
+
+    print(
+        "Trees:",
+        model.n_estimators
+    )
+
+    print(
+        "Deployment type:",
+        "URL_ONLY"
+    )
+
+    print(
+        "Features:",
+        len(URL_FEATURES)
+    )
+
+    print(
+        "Training samples:",
+        X_train.shape[0]
+    )
+
+    print(
+        "Testing samples:",
+        X_test.shape[0]
+    )
+
+    print(
+        "Label 0:",
+        label_mapping[0]
+    )
+
+    print(
+        "Label 1:",
+        label_mapping[1]
+    )
+
+    print(
+        f"Accuracy: {accuracy:.6f}"
+    )
+
+    print(
+        f"F1 Score: {f1:.6f}"
+    )
+
+    print(
+        "\nURL-only deployment model "
+        "is ready for testing."
+    )
+
+
+    # ============================================================
+    # 24. CREATE LOGISTIC REGRESSION
+    # ============================================================
+
+    logistic_model = Pipeline([
+        ("scaler", StandardScaler()),
+        ("classifier", LogisticRegression(
+            solver="lbfgs",
+            C=1.0,
+            max_iter=2000,
+        )),
+    ])
+
+
+    # ============================================================
+    # 25. TRAIN LOGISTIC REGRESSION
+    # ============================================================
+
+    print(
+        "\n===== TRAINING URL LOGISTIC REGRESSION ====="
+    )
+
+    # Stop instead of saving LR if the optimizer fails to converge.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConvergenceWarning)
+        logistic_model.fit(
+            X_train,
+            y_train,
+        )
+
+    print(
+        "Training complete."
+    )
+
+
+    # ============================================================
+    # 26. EVALUATE LOGISTIC REGRESSION
+    # ============================================================
+
+    logistic_predictions = logistic_model.predict(X_test)
+    phishing_column = list(logistic_model.classes_).index(0)
+    logistic_probabilities = logistic_model.predict_proba(X_test)[:, phishing_column]
+
+    logistic_accuracy = accuracy_score(
+        y_test,
+        logistic_predictions,
+    )
+
+    logistic_precision = precision_score(
+        y_test,
+        logistic_predictions,
+        pos_label=0,
+    )
+
+    logistic_recall = recall_score(
+        y_test,
+        logistic_predictions,
+        pos_label=0,
+    )
+
+    logistic_f1 = f1_score(
+        y_test,
+        logistic_predictions,
+        pos_label=0,
+    )
+
+    # Match the target to the phishing-probability column: True means phishing.
+    logistic_auc = roc_auc_score(
+        y_test == 0,
+        logistic_probabilities,
+    )
+
+    print(
+        "\n===== URL LOGISTIC REGRESSION RESULTS ====="
+    )
+    print(f"Accuracy:           {logistic_accuracy:.6f}")
+    print(f"Phishing Precision: {logistic_precision:.6f}")
+    print(f"Phishing Recall:    {logistic_recall:.6f}")
+    print(f"Phishing F1 Score:  {logistic_f1:.6f}")
+    print(f"ROC-AUC:            {logistic_auc:.6f}")
+
+
+    # ============================================================
+    # 27. SAVE LOGISTIC REGRESSION FOR THE GUI
+    # ============================================================
+
+
+    joblib.dump(
+        logistic_model,
+        LOGISTIC_MODEL_PATH,
+    )
+
+    print(
+        "Saved to:"
+    )
+    print(
+        LOGISTIC_MODEL_PATH
+    )
+    print(
+        "\nBoth URL-only models are ready for the GUI."
+    )
+
+
+if __name__ == "__main__":
+    main()
