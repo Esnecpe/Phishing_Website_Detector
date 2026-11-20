@@ -1,5 +1,5 @@
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 import ipaddress
 import re
 
@@ -39,90 +39,235 @@ def normalize_url(url):
     else:
         url = "https://" + url
 
+    # A bare host and its root slash identify the same HTTP resource.
+    # Keep non-root paths and query values: they may change which page is requested.
+    parsed = urlparse(url)
+    if parsed.path == "/":
+        url = urlunparse(parsed._replace(path=""))
+
     return url
-
-
-# The 12 features used by both URL-only models.
-# They are calculated from the domain name only (plus HTTPS).
-#
-# Why domain-only: every legitimate URL in the PhiUSIIL dataset is a
-# homepage written as https://www.domain with nothing after it. A model
-# trained on the full URL learned that "no www." or "has a path" means
-# phishing. Removing "www." and ignoring the path/query stops that
-# shortcut, so google.com, www.google.com and google.com/maps all give
-# the same result.
-DOMAIN_FEATURES = [
-    "DomainLength",
-    "IsDomainIP",
-    "TLDLength",
-    "NoOfSubDomain",
-    "NoOfLettersInDomain",
-    "LetterRatioInDomain",
-    "NoOfDigitsInDomain",
-    "DigitRatioInDomain",
-    "NoOfHyphensInDomain",
-    "SpecialCharRatioInDomain",
-    "LongestLabelLength",
-    "IsHTTPS",
-]
 
 
 def extract_url_features(url):
     """
-    Extract the 12 domain-based features used when training
-    url_random_forest.pkl and url_logistic_model.pkl.
+    Extract the exact same 15 URL-only features
+    used when training url_random_forest.pkl.
     """
 
     url = normalize_url(url)
+
     parsed = urlparse(url)
 
-    # domain name only, lowercase, without a leading "www."
-    domain = (parsed.hostname or "").lower()
-    if domain.startswith("www."):
-        domain = domain[4:]
+    domain = (
+        parsed.hostname
+        or ""
+    )
 
-    # IP address instead of a domain name?
+
+    # --------------------------------------------------------
+    # Basic URL values
+    # --------------------------------------------------------
+
+    url_length = len(url)
+
+    domain_length = len(domain)
+
+
+    # --------------------------------------------------------
+    # IsDomainIP
+    # --------------------------------------------------------
+
     try:
-        ipaddress.ip_address(domain)
+        ipaddress.ip_address(
+            domain
+        )
+
         is_domain_ip = 1
+
     except ValueError:
         is_domain_ip = 0
 
-    parts = domain.split(".")
-    length = len(domain)
-    safe_length = length if length > 0 else 1
 
-    # top-level domain length (com = 3, uk = 2)
-    if len(parts) > 1 and not is_domain_ip:
-        tld_length = len(parts[-1])
+    # --------------------------------------------------------
+    # TLDLength
+    # --------------------------------------------------------
+
+    domain_parts = domain.split(".")
+
+    if len(domain_parts) > 1:
+
+        tld_length = len(
+            domain_parts[-1]
+        )
+
     else:
+
         tld_length = 0
 
-    # subdomains after removing www. (mail.google.com = 1)
-    if is_domain_ip:
-        subdomain_count = 0
-    else:
-        subdomain_count = max(len(parts) - 2, 0)
 
-    letters = sum(ch.isalpha() for ch in domain)
-    digits = sum(ch.isdigit() for ch in domain)
-    hyphens = domain.count("-")
-    specials = len(re.findall(r"[^a-z0-9.]", domain))
+    # --------------------------------------------------------
+    # NoOfSubDomain
+    # --------------------------------------------------------
+
+    if len(domain_parts) <= 2:
+
+        subdomain_count = 0
+
+    else:
+
+        subdomain_count = (
+            len(domain_parts)
+            - 2
+        )
+
+
+    # --------------------------------------------------------
+    # Letter features
+    # --------------------------------------------------------
+
+    letter_count = sum(
+        character.isalpha()
+        for character in url
+    )
+
+    if url_length > 0:
+
+        letter_ratio = (
+            letter_count
+            / url_length
+        )
+
+    else:
+
+        letter_ratio = 0.0
+
+
+    # --------------------------------------------------------
+    # Digit features
+    # --------------------------------------------------------
+
+    digit_count = sum(
+        character.isdigit()
+        for character in url
+    )
+
+    if url_length > 0:
+
+        digit_ratio = (
+            digit_count
+            / url_length
+        )
+
+    else:
+
+        digit_ratio = 0.0
+
+
+    # --------------------------------------------------------
+    # URL character counts
+    # --------------------------------------------------------
+
+    equals_count = (
+        url.count("=")
+    )
+
+    question_mark_count = (
+        url.count("?")
+    )
+
+    ampersand_count = (
+        url.count("&")
+    )
+
+
+    # --------------------------------------------------------
+    # Special characters
+    # --------------------------------------------------------
+
+    special_characters = re.findall(
+        r"[^A-Za-z0-9]",
+        url
+    )
+
+    other_special_count = len(
+        special_characters
+    )
+
+
+    if url_length > 0:
+
+        special_char_ratio = (
+            other_special_count
+            / url_length
+        )
+
+    else:
+
+        special_char_ratio = 0.0
+
+
+    # --------------------------------------------------------
+    # HTTPS
+    # --------------------------------------------------------
+
+    is_https = (
+        1
+        if parsed.scheme == "https"
+        else 0
+    )
+
+
+    # --------------------------------------------------------
+    # Final feature dictionary
+    # --------------------------------------------------------
 
     features = {
-        "DomainLength": length,
-        "IsDomainIP": is_domain_ip,
-        "TLDLength": tld_length,
-        "NoOfSubDomain": subdomain_count,
-        "NoOfLettersInDomain": letters,
-        "LetterRatioInDomain": letters / safe_length,
-        "NoOfDigitsInDomain": digits,
-        "DigitRatioInDomain": digits / safe_length,
-        "NoOfHyphensInDomain": hyphens,
-        "SpecialCharRatioInDomain": specials / safe_length,
-        "LongestLabelLength": max(len(part) for part in parts),
-        "IsHTTPS": 1 if parsed.scheme == "https" else 0,
+        "URLLength":
+            url_length,
+
+        "DomainLength":
+            domain_length,
+
+        "IsDomainIP":
+            is_domain_ip,
+
+        "TLDLength":
+            tld_length,
+
+        "NoOfSubDomain":
+            subdomain_count,
+
+        "NoOfLettersInURL":
+            letter_count,
+
+        "LetterRatioInURL":
+            letter_ratio,
+
+        "NoOfDegitsInURL":
+            digit_count,
+
+        "DegitRatioInURL":
+            digit_ratio,
+
+        "NoOfEqualsInURL":
+            equals_count,
+
+        "NoOfQMarkInURL":
+            question_mark_count,
+
+        "NoOfAmpersandInURL":
+            ampersand_count,
+
+        "NoOfOtherSpecialCharsInURL":
+            other_special_count,
+
+        "SpacialCharRatioInURL":
+            special_char_ratio,
+
+        "IsHTTPS":
+            is_https,
     }
+
     return features
 
 
@@ -185,19 +330,19 @@ class PhishingPredictor:
             )
 
 
-        if len(self.feature_names) != len(DOMAIN_FEATURES):
+        if len(self.feature_names) != 15:
 
             raise ValueError(
                 "URL model does not contain "
-                f"{len(DOMAIN_FEATURES)} feature names."
+                "15 feature names."
             )
 
 
-        if self.model.n_features_in_ != len(DOMAIN_FEATURES):
+        if self.model.n_features_in_ != 15:
 
             raise ValueError(
                 "Random Forest does not expect "
-                f"{len(DOMAIN_FEATURES)} features."
+                "15 features."
             )
 
 
@@ -321,7 +466,7 @@ class PhishingPredictor:
 
 
         # ----------------------------------------------------
-        # Extract URL features
+        # Extract 15 URL features
         # ----------------------------------------------------
 
         features = self.extract_features(
@@ -671,7 +816,7 @@ if __name__ == "__main__":
         if show_features == "y":
 
             print(
-                "\n===== EXTRACTED FEATURES ====="
+                "\n===== 15 EXTRACTED FEATURES ====="
             )
 
 
