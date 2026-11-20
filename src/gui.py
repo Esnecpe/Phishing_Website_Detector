@@ -213,7 +213,7 @@ class PhishingGUI:
         # url details section
         found = [k for k in KEYWORDS if k in result["url"].lower()]
 
-        self.length_lbl.config(text=str(f["URLLength"]) + " chars")
+        self.length_lbl.config(text=str(len(result["url"])) + " chars")
         self.domain_lbl.config(text=domain)
         self.https_lbl.config(text="Yes" if f["IsHTTPS"] == 1 else "No")
         self.sub_lbl.config(text="-" if f["IsDomainIP"] == 1 else str(f["NoOfSubDomain"]))
@@ -226,9 +226,9 @@ class PhishingGUI:
             warnings.append("no HTTPS")
         if f["IsDomainIP"] == 1:
             warnings.append("uses an IP address instead of a domain")
-        if f["URLLength"] > 75:
+        if len(result["url"]) > 75:
             warnings.append("long URL")
-        if f["NoOfDegitsInURL"] >= 5:
+        if sum(ch.isdigit() for ch in result["url"]) >= 5:
             warnings.append("many digits")
         if "@" in result["url"]:
             warnings.append("has @ symbol")

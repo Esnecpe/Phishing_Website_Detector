@@ -1,5 +1,5 @@
 from pathlib import Path
-from phishing_predictor import extract_url_features
+from phishing_predictor import extract_url_features, DOMAIN_FEATURES
 from data_preprocessing import clean_data, check_numeric_data
 import warnings
 
@@ -54,23 +54,8 @@ MODEL_PATH.parent.mkdir(exist_ok=True)
 # 2. URL-ONLY FEATURE LIST
 # ============================================================
 
-URL_FEATURES = [
-    "URLLength",
-    "DomainLength",
-    "IsDomainIP",
-    "TLDLength",
-    "NoOfSubDomain",
-    "NoOfLettersInURL",
-    "LetterRatioInURL",
-    "NoOfDegitsInURL",
-    "DegitRatioInURL",
-    "NoOfEqualsInURL",
-    "NoOfQMarkInURL",
-    "NoOfAmpersandInURL",
-    "NoOfOtherSpecialCharsInURL",
-    "SpacialCharRatioInURL",
-    "IsHTTPS",
-]
+# Same list as phishing_predictor.py so training and prediction always match.
+URL_FEATURES = DOMAIN_FEATURES
 
 TARGET_COLUMN = "label"
 
@@ -539,12 +524,12 @@ def main():
 
     assert (
         loaded_model.n_features_in_
-        == 15
+        == len(URL_FEATURES)
     )
 
     assert (
         len(loaded_features)
-        == 15
+        == len(URL_FEATURES)
     )
 
     assert (

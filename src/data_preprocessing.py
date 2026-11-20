@@ -58,15 +58,20 @@ def inspect_data(df):
     print(df[TARGET_COLUMN].value_counts())
 
 
-def clean_data(df):
+def clean_data(df, url_only=False):
     """
     Clean the dataset.
 
     Steps:
     - Remove duplicate URLs
     - Remove rows containing missing values
+    - If url_only=True, keep only the URL and label columns
+      (used by train_url_deployment_model.py)
     """
     df = df.copy()
+
+    if url_only:
+        df = df[["URL", TARGET_COLUMN]]
 
     original_rows = df.shape[0]
 
