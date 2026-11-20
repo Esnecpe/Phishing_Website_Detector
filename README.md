@@ -203,6 +203,28 @@ This tool is an educational prototype and should not replace professional securi
 
 ---
 
+## Reference Textbook
+
+This project follows the course textbook:
+
+> Géron, A. (2023). *Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow* (3rd ed.). O'Reilly Media. ISBN 978-1-098-12597-4.
+
+The project is organized around the end-to-end workflow from Chapter 2, using the classification, model, and evaluation methods from Chapters 3, 4, and 7:
+
+| Textbook step (Chapter 2) | In this project |
+|---|---|
+| Look at the big picture | Problem: classify a URL as phishing or legitimate (binary classification) |
+| Get the data | PhiUSIIL Phishing URL Dataset from UCI |
+| Explore the data | `inspect_data()` and `check_numeric_data()` in `data_preprocessing.py` |
+| Prepare the data | Remove duplicates, drop text columns and `URLSimilarityIndex`, stratified 80/20 split |
+| Select and train a model | Random Forest (Ch. 7) and Logistic Regression (Ch. 4), using a scaling pipeline for Logistic Regression (Ch. 2) |
+| Evaluate with cross-validation | 5-fold stratified cross-validation (Ch. 2 and 3) |
+| Fine-tune the model | RandomizedSearchCV for Random Forest (Ch. 2) |
+| Measure performance | Confusion matrix, precision, recall, F1, ROC curve and AUC (Ch. 3) |
+| Launch the system | URL-only models + Tkinter GUI app |
+
+---
+
 ## Libraries
 
 Python, pandas, NumPy, scikit-learn, matplotlib, joblib, Tkinter (see `requirements.txt` for versions).
@@ -210,4 +232,5 @@ Python, pandas, NumPy, scikit-learn, matplotlib, joblib, Tkinter (see `requireme
 ## Acknowledgments
 
 - Dataset by Arvind Prasad and Shalini Chandra (see citation above).
+- Course textbook by Aurélien Géron (see Reference Textbook above).
 - ChatGPT (OpenAI) and Claude (Anthropic) were used for help with code, debugging, and documentation.
